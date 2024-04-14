@@ -1,6 +1,6 @@
 module github.com/ipoluianov/aneth_blocks_provider
 
-go 1.22.1
+go 1.19
 
 require (
 	github.com/ethereum/go-ethereum v1.13.14
