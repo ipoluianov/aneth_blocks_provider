@@ -2,29 +2,28 @@ package db
 
 import (
 	"context"
-	"errors"
+	"fmt"
 	"log"
 	"math/big"
-	"sort"
+	"os"
 	"sync"
 	"time"
 
 	"github.com/ethereum/go-ethereum/ethclient"
+	"github.com/ipoluianov/gomisc/logger"
 )
 
 type DB struct {
 	mtx sync.Mutex
 
 	// Settings
-	network        string
-	url            string
-	periodMs       int
-	maxBlocksCount int64
+	network  string
+	url      string
+	periodMs int
 
 	// Data
 	latestBlockNumber int64
-	blocksMap         map[int64]*Block
-	blocksList        []*Block
+	existingBlocks    map[int64]struct{}
 
 	// Runtime
 	client *ethclient.Client
@@ -41,9 +40,7 @@ func NewDB(network string, url string, periodMs int) *DB {
 	c.network = network
 	c.url = url
 	c.periodMs = periodMs
-	c.blocksMap = make(map[int64]*Block)
-	c.blocksList = make([]*Block, 0)
-	c.maxBlocksCount = 10000
+	c.existingBlocks = make(map[int64]struct{})
 	return &c
 }
 
@@ -87,12 +84,6 @@ func (c *DB) updateLatestBlockNumber() error {
 func (c *DB) State() (minBlock int64, maxBlock int64, countOfBlocks int, network string) {
 	c.mtx.Lock()
 	defer c.mtx.Unlock()
-	if len(c.blocksList) > 0 {
-		minBlock = c.blocksList[0].Number
-		maxBlock = c.blocksList[len(c.blocksList)-1].Number
-	}
-	countOfBlocks = len(c.blocksList)
-	network = c.network
 	return
 }
 
@@ -102,35 +93,32 @@ func (c *DB) LatestBlockNumber() int64 {
 	return c.latestBlockNumber
 }
 
-func (c *DB) GetBlock(blockNumber int64) (*Block, error) {
+func (c *DB) BlockExists(blockNumber int64) bool {
 	c.mtx.Lock()
 	defer c.mtx.Unlock()
-	if b, ok := c.blocksMap[blockNumber]; ok {
-		return b, nil
-	}
-	return nil, errors.New("not found")
-}
-
-func (c *DB) IsBlockExists(blockNumber int64) bool {
-	c.mtx.Lock()
-	defer c.mtx.Unlock()
-	if _, ok := c.blocksMap[blockNumber]; ok {
+	if _, ok := c.existingBlocks[blockNumber]; ok {
 		return true
 	}
-	return false
+	//dir := c.blockDir(blockNumber)
+	fileName := c.blockFile(blockNumber)
+	st, err := os.Stat(fileName)
+	if err != nil {
+		return false
+	}
+	if st.IsDir() {
+		return false
+	}
+	c.existingBlocks[blockNumber] = struct{}{}
+	return true
 }
 
 func (c *DB) loadNextBlock() {
 	blockNumberToLoad := int64(-1)
 	for blockNumber := c.latestBlockNumber; blockNumber > 0; blockNumber-- {
-		if !c.IsBlockExists(blockNumber) {
+		if !c.BlockExists(blockNumber) {
 			blockNumberToLoad = blockNumber
 			break
 		}
-	}
-
-	if blockNumberToLoad < c.latestBlockNumber-int64(c.maxBlocksCount) {
-		return
 	}
 
 	log.Println(c.network, "Getting Block:", blockNumberToLoad)
@@ -144,27 +132,55 @@ func (c *DB) loadNextBlock() {
 	b.Number = blockNumberToLoad
 	b.Header = *block.Header()
 	b.Transactions = block.Transactions()
-	c.addBlock(&b)
+
+	c.SaveBlock(&b)
 }
 
-func (c *DB) addBlock(b *Block) error {
-	c.mtx.Lock()
-	c.blocksMap[b.Number] = b
-	c.blocksList = append(c.blocksList, b)
-	sort.Slice(c.blocksList, func(i, j int) bool { return c.blocksList[i].Number < c.blocksList[j].Number })
-	c.mtx.Unlock()
-	c.purgeBlocks(c.maxBlocksCount)
-	return nil
-}
-
-func (c *DB) purgeBlocks(latestCount int64) {
-	c.mtx.Lock()
-	for len(c.blocksList) > int(latestCount) {
-		log.Println("DELETE BLOCK", c.blocksList[0].Number)
-		delete(c.blocksMap, c.blocksList[0].Number)
-		c.blocksList = c.blocksList[1:]
+func (c *DB) normilizeBlockNumberString(blockNumber int64) string {
+	blockNumberString := fmt.Sprint(blockNumber)
+	for len(blockNumberString) < 12 {
+		blockNumberString = "0" + blockNumberString
 	}
-	c.mtx.Unlock()
+	result := make([]byte, 0)
+	for i := 0; i < len(blockNumberString); i++ {
+		if (i%3) == 0 && i > 0 {
+			result = append(result, '-')
+		}
+		result = append(result, blockNumberString[i])
+	}
+	return string(result)
+}
+
+func (c *DB) blockDir(blockNumber int64) string {
+	dir := "data/" + c.network + "/" + c.normilizeBlockNumberString(blockNumber-(blockNumber%10000))
+	return dir
+}
+
+func (c *DB) blockFile(blockNumber int64) string {
+	fileName := c.blockDir(blockNumber) + "/" + c.normilizeBlockNumberString(blockNumber) + ".block"
+	return fileName
+}
+
+func (c *DB) SaveBlock(b *Block) error {
+	c.mtx.Lock()
+	defer c.mtx.Unlock()
+	dir := c.blockDir(b.Number)
+	err := os.MkdirAll(dir, 0777)
+	if err != nil {
+		logger.Println(c.network, "write block error:", err)
+		return err
+	}
+	fileName := c.blockFile(b.Number)
+	return b.Write(fileName)
+}
+
+func (c *DB) GetBlock(blockNumber int64) (*Block, error) {
+	c.mtx.Lock()
+	defer c.mtx.Unlock()
+	fileName := c.blockFile(blockNumber)
+	var b Block
+	err := b.Read(fileName)
+	return &b, err
 }
 
 func (c *DB) thLoad() {

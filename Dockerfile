@@ -8,4 +8,3 @@ RUN go mod tidy
 RUN CGO_ENABLED=0 GOOS=linux go build -o /aneth-block-provider
 EXPOSE 8201
 CMD ["/aneth-block-provider"]
-
