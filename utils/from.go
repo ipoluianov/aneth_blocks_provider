@@ -5,7 +5,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 )
 
-func TrFrom(tx *types.Transaction) common.Address {
+func TrFrom(tx *types.Transaction) *common.Address {
 	from, _ := types.Sender(types.NewLondonSigner(tx.ChainId()), tx)
-	return from
+	return &from
 }

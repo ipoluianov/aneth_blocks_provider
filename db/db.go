@@ -24,6 +24,7 @@ type DB struct {
 	// Data
 	latestBlockNumber int64
 	existingBlocks    map[int64]struct{}
+	blocksCache       map[int64]*Block
 
 	// Runtime
 	client *ethclient.Client
@@ -41,6 +42,7 @@ func NewDB(network string, url string, periodMs int) *DB {
 	c.url = url
 	c.periodMs = periodMs
 	c.existingBlocks = make(map[int64]struct{})
+	c.blocksCache = make(map[int64]*Block)
 	return &c
 }
 
@@ -74,7 +76,7 @@ func (c *DB) updateLatestBlockNumber() error {
 	}
 	c.mtx.Lock()
 	blockNum := block.Header().Number.Int64()
-	blockNum -= 10
+	blockNum -= 3
 	c.latestBlockNumber = blockNum
 	c.mtx.Unlock()
 	log.Println(c.network, "UpdateLatestBlockNumber result:", block.Header().Number.Int64(), "set:", blockNum)
@@ -177,10 +179,19 @@ func (c *DB) SaveBlock(b *Block) error {
 func (c *DB) GetBlock(blockNumber int64) (*Block, error) {
 	c.mtx.Lock()
 	defer c.mtx.Unlock()
-	fileName := c.blockFile(blockNumber)
-	var b Block
-	err := b.Read(fileName)
-	return &b, err
+	var b *Block
+	var err error
+	if bl, ok := c.blocksCache[blockNumber]; ok {
+		b = bl
+	} else {
+		b = &Block{}
+		fileName := c.blockFile(blockNumber)
+		err = b.Read(fileName)
+		if err == nil {
+			c.blocksCache[blockNumber] = b
+		}
+	}
+	return b, err
 }
 
 func (c *DB) thLoad() {
