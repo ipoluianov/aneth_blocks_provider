@@ -2,7 +2,7 @@ module github.com/ipoluianov/aneth_blocks_provider
 
 go 1.21
 
-toolchain go1.22.1
+toolchain go1.21.3
 
 require (
 	github.com/ClickHouse/clickhouse-go/v2 v2.23.1

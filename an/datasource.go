@@ -94,7 +94,7 @@ func (c *An) GroupByMinutes(beginDT uint64, endDT uint64, txs []*Tx) *TxsByMinut
 }
 
 func (c *An) GetLatestTransactions() *TxsByMinutes {
-	lastSeconds := uint64(300)
+	lastSeconds := uint64(24 * 3600)
 	lastTxDt := uint64(time.Now().UTC().Unix())
 	firstTxDt := uint64(lastTxDt - lastSeconds)
 	firstTxDt = firstTxDt / 60

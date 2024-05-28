@@ -73,7 +73,7 @@ func (c *An) anTrCount(ts *TxsByMinutes) {
 		var item ResultItem
 		item.Index = i
 		item.DT = src.DT
-		item.DTStr = time.Unix(int64(item.DT), 0).Format("2006-01-02 15:04:05")
+		item.DTStr = time.Unix(int64(item.DT), 0).UTC().Format("2006-01-02 15:04:05")
 		item.Value = float64(len(src.TXS))
 		result.Items = append(result.Items, &item)
 	}
