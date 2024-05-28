@@ -48,14 +48,15 @@ func (c *Block) From(tx *types.Transaction) string {
 func (c *Block) Read(fileName string) error {
 	bs, err := os.ReadFile(fileName)
 	if err != nil {
-		logger.Println("read block error:", err)
+		//logger.Println("read block error:", err)
 		return err
 	}
 	bs, err = utils.UnpackBytes(bs)
 	if err != nil {
-		logger.Println("read block error:", err)
+		//logger.Println("read block error:", err)
 		return err
 	}
+	logger.Println("len", len(bs))
 	err = json.Unmarshal(bs, c)
 	return err
 }

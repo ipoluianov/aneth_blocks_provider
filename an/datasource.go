@@ -7,6 +7,7 @@ import (
 
 	"github.com/ipoluianov/aneth_blocks_provider/db"
 	"github.com/ipoluianov/aneth_blocks_provider/utils"
+	"github.com/ipoluianov/gomisc/logger"
 )
 
 type TxsByMinutes struct {
@@ -24,12 +25,12 @@ func (c *An) GetTransactions(beginDT uint64, endDT uint64, secondsPerBlock uint6
 	unixTimeEnd := endDT
 	blocks := make([]*db.Block, 0)
 	blNumber := db.Instance.LatestBlockNumber()
-	blNumberBegin := blNumber - int64((endDT-beginDT)/secondsPerBlock)*2
+	blNumberBegin := blNumber - int64((endDT-beginDT)/secondsPerBlock)
 
-	fmt.Println("Count of blocks to request:", blNumber-blNumberBegin)
+	logger.Println("Count of blocks to request:", blNumber-blNumberBegin)
 
 	for blNumber > blNumberBegin {
-		bl, err := db.Instance.GetBlock(blNumber)
+		bl, err := db.Instance.GetBlockFromCache(blNumber)
 		if err != nil || bl.Header.Time < unixTimeBegin || bl.Header.Time > unixTimeEnd {
 			blNumber--
 			continue

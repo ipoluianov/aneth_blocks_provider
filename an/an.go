@@ -1,11 +1,11 @@
 package an
 
 import (
-	"fmt"
 	"sync"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ipoluianov/gomisc/logger"
 )
 
 type An struct {
@@ -55,12 +55,15 @@ func (c *An) GetResult(code string) *Result {
 func (c *An) ThAn() {
 	for {
 		dt1 := time.Now()
-		fmt.Println("---------- an ------------")
+		logger.Println("")
+		logger.Println("---------- an ------------")
+		logger.Println("reading transactions")
 		ts := c.GetLatestTransactions()
 		c.an(ts)
 		dt2 := time.Now()
-		fmt.Println("execution time:", dt2.Sub(dt1).Milliseconds(), "ms")
-		fmt.Println("--------------------------")
+		logger.Println("execution time:", dt2.Sub(dt1).Milliseconds(), "ms")
+		logger.Println("--------------------------")
+		logger.Println("")
 
 		time.Sleep(3 * time.Second)
 	}

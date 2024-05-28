@@ -2,10 +2,12 @@ package db
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"math/big"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -53,12 +55,47 @@ func (c *DB) Start() {
 		log.Println(err)
 	}
 
+	c.LoadExistingBlocks()
+
 	c.updateLatestBlockNumber()
 	go c.thLoad()
 	go c.thUpdateLatestBlock()
 }
 
 func (c *DB) Stop() {
+}
+
+func getFiles(dir string) ([]string, error) {
+	var files []string
+	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() {
+			files = append(files, path)
+		}
+		return nil
+	})
+	return files, err
+}
+
+func (c *DB) LoadExistingBlocks() {
+	c.mtx.Lock()
+	files, err := getFiles("data/" + c.network + "/")
+	if err != nil {
+		logger.Println("DB::LoadExistingBlocks error", err)
+	}
+
+	for i, fileName := range files {
+		logger.Println("loading file", fileName, " ", i, "/", len(files))
+		var bl Block
+		err = bl.Read(fileName)
+		if err != nil {
+			continue
+		}
+		c.blocksCache[bl.Number] = &bl
+	}
+	c.mtx.Unlock()
 }
 
 func (c *DB) updateLatestBlockNumber() error {
@@ -136,6 +173,9 @@ func (c *DB) loadNextBlock() {
 	b.Transactions = block.Transactions()
 
 	c.SaveBlock(&b)
+	c.mtx.Lock()
+	c.blocksCache[b.Number] = &b
+	c.mtx.Unlock()
 }
 
 func (c *DB) normilizeBlockNumberString(blockNumber int64) string {
@@ -190,6 +230,19 @@ func (c *DB) GetBlock(blockNumber int64) (*Block, error) {
 		if err == nil {
 			c.blocksCache[blockNumber] = b
 		}
+	}
+	return b, err
+}
+
+func (c *DB) GetBlockFromCache(blockNumber int64) (*Block, error) {
+	c.mtx.Lock()
+	defer c.mtx.Unlock()
+	var b *Block
+	var err error
+	if bl, ok := c.blocksCache[blockNumber]; ok {
+		b = bl
+	} else {
+		err = errors.New("not found")
 	}
 	return b, err
 }
