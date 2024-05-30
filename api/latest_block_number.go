@@ -9,7 +9,7 @@ import (
 
 func LatestBlockNumber(c *gin.Context) {
 	type Result struct {
-		LatestBlockNumber int64
+		LatestBlockNumber uint64
 	}
 	var result Result
 	result.LatestBlockNumber = db.Instance.LatestBlockNumber()

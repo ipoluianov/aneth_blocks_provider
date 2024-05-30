@@ -8,5 +8,5 @@ import (
 )
 
 func Analytic(c *gin.Context) {
-	c.IndentedJSON(http.StatusOK, an.Instance.GetResult("an"))
+	c.IndentedJSON(http.StatusOK, an.Instance.GetResult("vl"))
 }

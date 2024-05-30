@@ -15,7 +15,7 @@ func Block(c *gin.Context) {
 		c.AbortWithError(500, err)
 	}
 
-	b, err := db.Instance.GetBlock(blockNumber)
+	b, err := db.Instance.GetBlock(uint64(blockNumber))
 	if err != nil {
 		type Result struct {
 			Error string

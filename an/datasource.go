@@ -6,32 +6,22 @@ import (
 	"time"
 
 	"github.com/ipoluianov/aneth_blocks_provider/db"
-	"github.com/ipoluianov/aneth_blocks_provider/utils"
 	"github.com/ipoluianov/gomisc/logger"
 )
 
-type TxsByMinutes struct {
-	Items []*TxsByMinute
-}
-
-type TxsByMinute struct {
-	DT  uint64
-	TXS []*Tx
-}
-
-func (c *An) GetTransactions(beginDT uint64, endDT uint64, secondsPerBlock uint64) []*Tx {
-
+func (c *An) GetTransactions(beginDT uint64, endDT uint64, secondsPerBlock uint64) []*db.Tx {
+	logger.Println("An::GetTransactions begin")
 	unixTimeBegin := beginDT
 	unixTimeEnd := endDT
 	blocks := make([]*db.Block, 0)
 	blNumber := db.Instance.LatestBlockNumber()
-	blNumberBegin := blNumber - int64((endDT-beginDT)/secondsPerBlock)
+	blNumberBegin := blNumber - uint64((endDT-beginDT)/secondsPerBlock)
 
-	logger.Println("Count of blocks to request:", blNumber-blNumberBegin)
+	logger.Println("An::GetTransactions expected blocks count:", blNumber-blNumberBegin)
 
 	for blNumber > blNumberBegin {
 		bl, err := db.Instance.GetBlockFromCache(blNumber)
-		if err != nil || bl.Header.Time < unixTimeBegin || bl.Header.Time > unixTimeEnd {
+		if err != nil || bl.Time < unixTimeBegin || bl.Time > unixTimeEnd {
 			blNumber--
 			continue
 		}
@@ -39,30 +29,28 @@ func (c *An) GetTransactions(beginDT uint64, endDT uint64, secondsPerBlock uint6
 		blNumber--
 	}
 
-	var result []*Tx
+	result := make([]*db.Tx, 0, len(blocks)*300)
+
+	logger.Println("An::GetTransactions blocks:", len(blocks))
 
 	for _, bl := range blocks {
-		for txIndex := 0; txIndex < len(bl.Transactions); txIndex++ {
-			t := bl.Transactions[txIndex]
-			var item Tx
-			item.BlockNumber = bl.Header.Number.Uint64()
-			item.BlockDT = bl.Header.Time
-			item.TxFrom = utils.TrFrom(t)
-			item.TxTo = t.To()
-			item.TxData = t.Data()
-			result = append(result, &item)
-		}
+		result = append(result, bl.Txs...)
 	}
 
+	logger.Println("An::GetTransactions sorting")
+
 	sort.Slice(result, func(i, j int) bool {
-		return result[i].BlockDT < result[j].BlockDT
+		return result[i].BlDT < result[j].BlDT
 	})
+
+	logger.Println("An::GetTransactions end")
 
 	return result
 }
 
-func (c *An) GroupByMinutes(beginDT uint64, endDT uint64, txs []*Tx) *TxsByMinutes {
-	var res TxsByMinutes
+func (c *An) GroupByMinutes(beginDT uint64, endDT uint64, txs []*db.Tx) *db.TxsByMinutes {
+	logger.Println("An::GroupByMinutes begin")
+	var res db.TxsByMinutes
 	firstTxDt := beginDT
 	lastTxDt := endDT
 
@@ -73,28 +61,30 @@ func (c *An) GroupByMinutes(beginDT uint64, endDT uint64, txs []*Tx) *TxsByMinut
 	lastTxDt = lastTxDt * 60
 
 	countOfRanges := (lastTxDt - firstTxDt) / 60
-	res.Items = make([]*TxsByMinute, countOfRanges)
+	res.Items = make([]*db.TxsByMinute, countOfRanges)
 
 	index := 0
 	for dt := firstTxDt; dt < lastTxDt; dt += 60 {
-		res.Items[index] = &TxsByMinute{}
+		res.Items[index] = &db.TxsByMinute{}
 		res.Items[index].DT = dt
 		index++
 	}
 
 	for i := 0; i < len(txs); i++ {
 		t := txs[i]
-		rangeIndex := (t.BlockDT - firstTxDt) / 60
+		rangeIndex := (t.BlDT - firstTxDt) / 60
 		if int(rangeIndex) >= len(res.Items) {
 			fmt.Println("OVERFLOW")
 		}
 		res.Items[rangeIndex].TXS = append(res.Items[rangeIndex].TXS, t)
 	}
 
+	logger.Println("An::GroupByMinutes end")
+
 	return &res
 }
 
-func (c *An) GetLatestTransactions() *TxsByMinutes {
+func (c *An) GetLatestTransactions() *db.TxsByMinutes {
 	lastSeconds := uint64(24 * 3600)
 	lastTxDt := uint64(time.Now().UTC().Unix())
 	firstTxDt := uint64(lastTxDt - lastSeconds)
@@ -104,7 +94,7 @@ func (c *An) GetLatestTransactions() *TxsByMinutes {
 	lastTxDt = (lastTxDt + 1) * 60
 	txs := c.GetTransactions(firstTxDt, lastTxDt, 12)
 	if len(txs) < 1 {
-		return &TxsByMinutes{}
+		return &db.TxsByMinutes{}
 	}
 	byMinutes := c.GroupByMinutes(firstTxDt, lastTxDt, txs)
 	return byMinutes

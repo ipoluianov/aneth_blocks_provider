@@ -1,24 +1,17 @@
 package an
 
 import (
+	"math/big"
 	"sync"
 	"time"
 
-	"github.com/ethereum/go-ethereum/common"
+	"github.com/ipoluianov/aneth_blocks_provider/db"
 	"github.com/ipoluianov/gomisc/logger"
 )
 
 type An struct {
 	analytics map[string]*Result
 	mtx       sync.Mutex
-}
-
-type Tx struct {
-	BlockNumber uint64
-	BlockDT     uint64
-	TxFrom      *common.Address
-	TxTo        *common.Address
-	TxData      []byte
 }
 
 var Instance *An
@@ -35,11 +28,19 @@ func NewAn() *An {
 }
 
 func (c *An) Start() {
-	go c.ThAn()
+	//go c.ThAn()
 }
 
-func (c *An) an(ts *TxsByMinutes) {
+func (c *An) an(ts *db.TxsByMinutes) {
+	count := 0
+	for _, item := range ts.Items {
+		count += len(item.TXS)
+	}
+	logger.Println("An::an txs:", count)
 	c.anTrCount(ts)
+	for i := 0; i < 1; i++ {
+		c.anTrValue(ts)
+	}
 }
 
 func (c *An) GetResult(code string) *Result {
@@ -69,7 +70,8 @@ func (c *An) ThAn() {
 	}
 }
 
-func (c *An) anTrCount(ts *TxsByMinutes) {
+func (c *An) anTrCount(ts *db.TxsByMinutes) {
+	logger.Println("An::anTrCount begin")
 	var result Result
 	for i := 0; i < len(ts.Items); i++ {
 		src := ts.Items[i]
@@ -85,4 +87,31 @@ func (c *An) anTrCount(ts *TxsByMinutes) {
 	c.mtx.Lock()
 	c.analytics["an"] = &result
 	c.mtx.Unlock()
+	logger.Println("An::anTrCount end")
+}
+
+func (c *An) anTrValue(ts *db.TxsByMinutes) {
+	logger.Println("An::anTrValue begin")
+	var result Result
+	for i := 0; i < len(ts.Items); i++ {
+		src := ts.Items[i]
+		var item ResultItem
+		item.Index = i
+		item.DT = src.DT
+		item.DTStr = time.Unix(int64(item.DT), 0).UTC().Format("2006-01-02 15:04:05")
+		v := big.NewInt(0)
+		for _, t := range src.TXS {
+			v = v.Add(v, t.TxValue)
+		}
+
+		item.Value, _ = v.Float64()
+
+		result.Items = append(result.Items, &item)
+	}
+	result.Count = len(result.Items)
+	result.CurrentDateTime = time.Now().UTC().Format("2006-01-02 15:04:05")
+	c.mtx.Lock()
+	c.analytics["vl"] = &result
+	c.mtx.Unlock()
+	logger.Println("An::anTrValue end")
 }

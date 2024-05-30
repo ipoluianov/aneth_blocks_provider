@@ -11,9 +11,9 @@ import (
 )
 
 type Block struct {
-	Number       int64
-	Header       types.Header
-	Transactions types.Transactions
+	Number uint64
+	Time   uint64
+	Txs    []*Tx
 }
 
 func NewBlock() *Block {
@@ -22,7 +22,7 @@ func NewBlock() *Block {
 }
 
 func (c *Block) String() string {
-	return fmt.Sprint("Block# ", c.Number, " Time:", c.Header.Time)
+	return fmt.Sprint("Block# ", c.Number, " Time:", c.Time)
 }
 
 func (c *Block) Write(fileName string) error {
@@ -48,15 +48,15 @@ func (c *Block) From(tx *types.Transaction) string {
 func (c *Block) Read(fileName string) error {
 	bs, err := os.ReadFile(fileName)
 	if err != nil {
-		//logger.Println("read block error:", err)
+		logger.Println("Block::Read", "read block error:", err)
 		return err
 	}
 	bs, err = utils.UnpackBytes(bs)
 	if err != nil {
-		//logger.Println("read block error:", err)
+		logger.Println("Block::Read", "read block error:", err)
 		return err
 	}
-	logger.Println("len", len(bs))
 	err = json.Unmarshal(bs, c)
+
 	return err
 }
