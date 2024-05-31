@@ -7,6 +7,7 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
 	"time"
 
@@ -27,6 +28,7 @@ type DB struct {
 	periodMs int
 
 	blockNumberDepth uint64
+	timeDepth        uint64
 
 	// Data
 	latestBlockNumber uint64
@@ -51,7 +53,12 @@ func NewDB(network string, url string, periodMs int) *DB {
 	c.existingBlocks = make(map[uint64]struct{})
 	c.blocksCache = make(map[uint64]*Block)
 	c.status = "init"
-	c.blockNumberDepth = 5 * 60
+	c.latestBlockNumber = 0
+
+	c.timeDepth = uint64(86400)
+	secondsPerBlock := uint64(12)
+	c.blockNumberDepth = c.timeDepth / secondsPerBlock
+
 	return &c
 }
 
@@ -62,6 +69,14 @@ func (c *DB) Start() {
 	if err != nil {
 		logger.Println(err)
 	}
+
+	c.status = "getting latest block number"
+	for c.latestBlockNumber == 0 {
+		c.updateLatestBlockNumber()
+		time.Sleep(1 * time.Second)
+	}
+
+	logger.Println("Latest block number received: ", c.latestBlockNumber)
 
 	c.LoadExistingBlocks()
 
@@ -134,13 +149,207 @@ func (c *DB) updateLatestBlockNumber() error {
 	return nil
 }
 
-func (c *DB) State() (dbState DbState) {
+func (c *DB) GetState() (dbState *DbState) {
 	c.mtx.Lock()
-	defer c.mtx.Unlock()
+	dbState = &DbState{}
 	dbState.CountOfBlocks = len(c.blocksCache)
 	dbState.Status = c.status
 	dbState.SubStatus = c.substatus
+	blocksArray := make([]*Block, 0)
+	for _, bl := range c.blocksCache {
+		blocksArray = append(blocksArray, bl)
+	}
+	c.mtx.Unlock()
+
+	sort.Slice(blocksArray, func(i, j int) bool {
+		return blocksArray[i].Number < blocksArray[j].Number
+	})
+
+	if len(blocksArray) > 0 {
+		var currentRange DbStateBlockRange
+
+		currentBlockNumber := uint64(0)
+		for _, bl := range blocksArray {
+			if currentBlockNumber == 0 {
+				currentRange.Number1 = bl.Number
+				currentRange.DtStr1 = time.Unix(int64(bl.Time), 0).Format("2006-01-02 15:04:05")
+				currentRange.Number2 = bl.Number
+				currentRange.DtStr2 = time.Unix(int64(bl.Time), 0).Format("2006-01-02 15:04:05")
+				currentRange.Count = 1
+				currentBlockNumber = bl.Number
+				continue
+			}
+
+			if bl.Number != currentBlockNumber+1 {
+				currentRange.Count = int(currentRange.Number2 - currentRange.Number1 + 1)
+				dbState.LoadedBlocks = append(dbState.LoadedBlocks, currentRange)
+				currentRange = DbStateBlockRange{}
+				currentBlockNumber = bl.Number
+
+				currentRange.Number1 = bl.Number
+				currentRange.DtStr1 = time.Unix(int64(bl.Time), 0).Format("2006-01-02 15:04:05")
+				currentRange.Number2 = bl.Number
+				currentRange.DtStr2 = time.Unix(int64(bl.Time), 0).Format("2006-01-02 15:04:05")
+				currentRange.Count = 1
+				continue
+			}
+
+			currentBlockNumber = bl.Number
+			currentRange.Number2 = bl.Number
+			currentRange.DtStr2 = time.Unix(int64(bl.Time), 0).Format("2006-01-02 15:04:05")
+		}
+		currentRange.Count = int(currentRange.Number2 - currentRange.Number1 + 1)
+		dbState.LoadedBlocks = append(dbState.LoadedBlocks, currentRange)
+	}
+
+	loadedBlocksSortByCount := make([]DbStateBlockRange, len(dbState.LoadedBlocks))
+	copy(loadedBlocksSortByCount, dbState.LoadedBlocks)
+	sort.Slice(loadedBlocksSortByCount, func(i, j int) bool {
+		return loadedBlocksSortByCount[i].Count < loadedBlocksSortByCount[j].Count
+	})
+
+	txs := c.GetData(0, 0xFFFFFFFFFFFFFFFF)
+	dbState.LoadedBlocksTimeRange = "-"
+	if len(txs) > 0 {
+		dtBegin := time.Unix(int64(txs[0].BlDT), 0).Format("2006-01-02 15-04-05")
+		dtEnd := time.Unix(int64(txs[len(txs)-1].BlDT), 0).Format("2006-01-02 15-04-05")
+		dbState.LoadedBlocksTimeRange = dtBegin + " - " + dtEnd
+	}
+
 	return
+}
+
+func (c *DB) GetData(timeBegin uint64, timeEnd uint64) []*Tx {
+	c.mtx.Lock()
+	blocksArray := make([]*Block, 0)
+	for _, bl := range c.blocksCache {
+		if bl.Time >= timeBegin && bl.Time <= timeEnd {
+			blocksArray = append(blocksArray, bl)
+		}
+	}
+	c.mtx.Unlock()
+
+	sort.Slice(blocksArray, func(i, j int) bool {
+		return blocksArray[i].Number < blocksArray[j].Number
+	})
+
+	loadedBlocks := make([]DbStateBlockRange, 0)
+	if len(blocksArray) > 0 {
+		var currentRange DbStateBlockRange
+
+		currentBlockNumber := uint64(0)
+		for _, bl := range blocksArray {
+			if currentBlockNumber == 0 {
+				currentRange.Number1 = bl.Number
+				currentRange.DtStr1 = time.Unix(int64(bl.Time), 0).Format("2006-01-02 15:04:05")
+				currentRange.Number2 = bl.Number
+				currentRange.DtStr2 = time.Unix(int64(bl.Time), 0).Format("2006-01-02 15:04:05")
+				currentRange.Count = 1
+				currentBlockNumber = bl.Number
+				continue
+			}
+
+			if bl.Number != currentBlockNumber+1 {
+				currentRange.Count = int(currentRange.Number2 - currentRange.Number1 + 1)
+				loadedBlocks = append(loadedBlocks, currentRange)
+				currentRange = DbStateBlockRange{}
+				currentBlockNumber = bl.Number
+
+				currentRange.Number1 = bl.Number
+				currentRange.DtStr1 = time.Unix(int64(bl.Time), 0).Format("2006-01-02 15:04:05")
+				currentRange.Number2 = bl.Number
+				currentRange.DtStr2 = time.Unix(int64(bl.Time), 0).Format("2006-01-02 15:04:05")
+				currentRange.Count = 1
+				continue
+			}
+
+			currentBlockNumber = bl.Number
+			currentRange.Number2 = bl.Number
+			currentRange.DtStr2 = time.Unix(int64(bl.Time), 0).Format("2006-01-02 15:04:05")
+		}
+		currentRange.Count = int(currentRange.Number2 - currentRange.Number1 + 1)
+		loadedBlocks = append(loadedBlocks, currentRange)
+	}
+
+	loadedBlocksSortByCount := make([]DbStateBlockRange, len(loadedBlocks))
+	copy(loadedBlocksSortByCount, loadedBlocks)
+	sort.Slice(loadedBlocksSortByCount, func(i, j int) bool {
+		return loadedBlocksSortByCount[i].Count < loadedBlocksSortByCount[j].Count
+	})
+
+	if len(loadedBlocksSortByCount) == 0 {
+		return nil
+	}
+
+	biggestRange := loadedBlocksSortByCount[len(loadedBlocksSortByCount)-1]
+
+	txs := make([]*Tx, 0)
+
+	c.mtx.Lock()
+	for blNumber := biggestRange.Number1; blNumber <= biggestRange.Number2; blNumber++ {
+		bl, ok := c.blocksCache[blNumber]
+		if ok && bl != nil {
+			txs = append(txs, bl.Txs...)
+		}
+	}
+	c.mtx.Unlock()
+
+	sort.Slice(txs, func(i, j int) bool {
+		return txs[i].BlDT < txs[j].BlDT
+	})
+	return txs
+}
+
+func (c *DB) GroupByMinutes(beginDT uint64, endDT uint64, txs []*Tx) *TxsByMinutes {
+	logger.Println("An::GroupByMinutes begin")
+	var res TxsByMinutes
+	firstTxDt := beginDT
+	lastTxDt := endDT
+
+	firstTxDt = firstTxDt / 60
+	firstTxDt = firstTxDt * 60
+
+	lastTxDt = lastTxDt / 60
+	lastTxDt = lastTxDt * 60
+
+	countOfRanges := (lastTxDt - firstTxDt) / 60
+	res.Items = make([]*TxsByMinute, countOfRanges)
+
+	index := 0
+	for dt := firstTxDt; dt < lastTxDt; dt += 60 {
+		res.Items[index] = &TxsByMinute{}
+		res.Items[index].DT = dt
+		index++
+	}
+
+	for i := 0; i < len(txs); i++ {
+		t := txs[i]
+		rangeIndex := (t.BlDT - firstTxDt) / 60
+		if int(rangeIndex) >= len(res.Items) {
+			fmt.Println("OVERFLOW")
+		}
+		res.Items[rangeIndex].TXS = append(res.Items[rangeIndex].TXS, t)
+	}
+
+	logger.Println("An::GroupByMinutes end")
+
+	return &res
+}
+
+func (c *DB) GetLatestTransactions() (*TxsByMinutes, []*Tx) {
+	lastSeconds := uint64(24 * 3600)
+	lastTxDt := uint64(time.Now().UTC().Unix())
+	firstTxDt := uint64(lastTxDt - lastSeconds)
+	firstTxDt = firstTxDt / 60
+	firstTxDt = firstTxDt * 60
+	lastTxDt = lastTxDt / 60
+	lastTxDt = (lastTxDt + 1) * 60
+	txs := c.GetData(firstTxDt, lastTxDt)
+	if len(txs) < 1 {
+		return &TxsByMinutes{}, nil
+	}
+	byMinutes := c.GroupByMinutes(firstTxDt, lastTxDt, txs)
+	return byMinutes, txs
 }
 
 func (c *DB) LatestBlockNumber() uint64 {
@@ -168,6 +377,10 @@ func (c *DB) BlockExists(blockNumber uint64) bool {
 	return true
 }
 
+func (c *DB) firstBlockToLoad() uint64 {
+	return c.latestBlockNumber - c.blockNumberDepth
+}
+
 func (c *DB) loadNextBlock() {
 	blockNumberToLoad := uint64(0)
 	for blockNumber := c.latestBlockNumber; blockNumber > 0; blockNumber-- {
@@ -177,7 +390,7 @@ func (c *DB) loadNextBlock() {
 		}
 	}
 
-	if blockNumberToLoad < c.latestBlockNumber-c.blockNumberDepth {
+	if blockNumberToLoad < c.firstBlockToLoad()+10 {
 		logger.Println("DB::loadNextBlock", "no block to load:", blockNumberToLoad, "latest block:", c.latestBlockNumber)
 		return
 	}
@@ -293,6 +506,32 @@ func (c *DB) thUpdateLatestBlock() {
 
 	for {
 		c.updateLatestBlockNumber()
+		c.removeOldBlocks()
 		time.Sleep(5000 * time.Millisecond)
+	}
+}
+
+func (c *DB) removeOldBlocks() {
+	c.mtx.Lock()
+	defer c.mtx.Unlock()
+
+	leftBorderOfTime := uint64(time.Now().Unix()) - c.timeDepth
+
+	blocksToRemove := make([]uint64, 0)
+	for _, bl := range c.blocksCache {
+		if bl.Time < leftBorderOfTime {
+			blocksToRemove = append(blocksToRemove, bl.Number)
+		}
+	}
+
+	for _, bNum := range blocksToRemove {
+		delete(c.blocksCache, bNum)
+		filePath := c.blockFile(bNum)
+		err := os.Remove(filePath)
+		if err != nil {
+			logger.Println("DB::removeOldBlocks", "remove file error:", err)
+		} else {
+			logger.Println("DB::removeOldBlocks", "remove file", filePath, "SUCCESS")
+		}
 	}
 }

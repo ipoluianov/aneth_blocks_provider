@@ -1,7 +1,6 @@
 package an
 
 import (
-	"math/big"
 	"sync"
 	"time"
 
@@ -12,35 +11,40 @@ import (
 type An struct {
 	analytics map[string]*Result
 	mtx       sync.Mutex
+	tasks     []*Task
+}
+
+type AnState struct {
+	Tasks []*TaskState
 }
 
 var Instance *An
 
 func init() {
 	Instance = NewAn()
-	Instance.Start()
 }
 
 func NewAn() *An {
 	var c An
 	c.analytics = make(map[string]*Result)
+	c.tasks = append(c.tasks, NewTask("minutes_count", c.taskMinutesCount))
+	c.tasks = append(c.tasks, NewTask("minutes_values", c.taskMinutesValues))
 	return &c
 }
 
 func (c *An) Start() {
-	//go c.ThAn()
+	go c.ThAn()
 }
 
-func (c *An) an(ts *db.TxsByMinutes) {
-	count := 0
-	for _, item := range ts.Items {
-		count += len(item.TXS)
+func (c *An) GetState() *AnState {
+	var st AnState
+	c.mtx.Lock()
+	for _, t := range c.tasks {
+		state := t.State
+		st.Tasks = append(st.Tasks, &state)
 	}
-	logger.Println("An::an txs:", count)
-	c.anTrCount(ts)
-	for i := 0; i < 1; i++ {
-		c.anTrValue(ts)
-	}
+	c.mtx.Unlock()
+	return &st
 }
 
 func (c *An) GetResult(code string) *Result {
@@ -59,8 +63,28 @@ func (c *An) ThAn() {
 		logger.Println("")
 		logger.Println("---------- an ------------")
 		logger.Println("reading transactions")
-		ts := c.GetLatestTransactions()
-		c.an(ts)
+		txsByMinutes, txs := db.Instance.GetLatestTransactions()
+		count := 0
+		for _, item := range txsByMinutes.Items {
+			count += len(item.TXS)
+		}
+		logger.Println("An::an txs:", len(txs))
+
+		for _, task := range c.tasks {
+			var res Result
+			res.Code = task.Code
+			dtBegin := time.Now()
+			task.Fn(&res, txsByMinutes, txs)
+			dtEnd := time.Now()
+			duration := dtEnd.Sub(dtBegin).Milliseconds()
+			task.State.Code = task.Code
+			task.State.LastExecTime = time.Now().Format("2006-01-02 15:04:05")
+			task.State.LastExecTimeDurationMs = int(duration)
+			c.mtx.Lock()
+			c.analytics[task.Code] = &res
+			c.mtx.Unlock()
+		}
+
 		dt2 := time.Now()
 		logger.Println("execution time:", dt2.Sub(dt1).Milliseconds(), "ms")
 		logger.Println("--------------------------")
@@ -68,50 +92,4 @@ func (c *An) ThAn() {
 
 		time.Sleep(3 * time.Second)
 	}
-}
-
-func (c *An) anTrCount(ts *db.TxsByMinutes) {
-	logger.Println("An::anTrCount begin")
-	var result Result
-	for i := 0; i < len(ts.Items); i++ {
-		src := ts.Items[i]
-		var item ResultItem
-		item.Index = i
-		item.DT = src.DT
-		item.DTStr = time.Unix(int64(item.DT), 0).UTC().Format("2006-01-02 15:04:05")
-		item.Value = float64(len(src.TXS))
-		result.Items = append(result.Items, &item)
-	}
-	result.Count = len(result.Items)
-	result.CurrentDateTime = time.Now().UTC().Format("2006-01-02 15:04:05")
-	c.mtx.Lock()
-	c.analytics["an"] = &result
-	c.mtx.Unlock()
-	logger.Println("An::anTrCount end")
-}
-
-func (c *An) anTrValue(ts *db.TxsByMinutes) {
-	logger.Println("An::anTrValue begin")
-	var result Result
-	for i := 0; i < len(ts.Items); i++ {
-		src := ts.Items[i]
-		var item ResultItem
-		item.Index = i
-		item.DT = src.DT
-		item.DTStr = time.Unix(int64(item.DT), 0).UTC().Format("2006-01-02 15:04:05")
-		v := big.NewInt(0)
-		for _, t := range src.TXS {
-			v = v.Add(v, t.TxValue)
-		}
-
-		item.Value, _ = v.Float64()
-
-		result.Items = append(result.Items, &item)
-	}
-	result.Count = len(result.Items)
-	result.CurrentDateTime = time.Now().UTC().Format("2006-01-02 15:04:05")
-	c.mtx.Lock()
-	c.analytics["vl"] = &result
-	c.mtx.Unlock()
-	logger.Println("An::anTrValue end")
 }
